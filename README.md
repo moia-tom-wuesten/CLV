@@ -1,1 +1,9 @@
 # CLV
+pandas
+numpy
+tqdm
+tensorflow
+tensorflow-probability
+matplotlib
+jupyter
+notebook
