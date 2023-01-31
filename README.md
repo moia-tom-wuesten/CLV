@@ -1,9 +1,7 @@
 # CLV
-pandas
-numpy
-tqdm
-tensorflow
-tensorflow-probability
-matplotlib
-jupyter
-notebook
+
+Here's a description of the image below:
+
+git ![Bank transactions](plots_valendin/calibration_holdout.png)
+
+Some text after the image.
