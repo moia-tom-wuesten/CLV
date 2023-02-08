@@ -3,13 +3,23 @@ import numpy as np
 import copy
 import matplotlib.pyplot as plt
 from datetime import datetime
-import pytorch_model.base_model as LSTMModel
+import src.CLV.pytorch_model.base_model as LSTMModel
 import importlib
+from torchviz import make_dot
 
 importlib.reload(LSTMModel)
 
 
 class EarlyStopping:
+    """
+    The EarlyStopping class provides a method to stop training early if there is no significant improvement in the validation loss.
+    Attributes:
+    tolerance (int): Number of consecutive epochs with no improvement to wait before stopping.
+    min_delta (int): Minimum change in the monitored quantity to qualify as an improvement.
+    counter (int): Number of consecutive epochs with no improvement.
+    early_stop (bool): Flag indicating whether early stopping is triggered.
+    """
+
     def __init__(self, tolerance=5, min_delta=0):
 
         self.tolerance = tolerance
@@ -18,6 +28,9 @@ class EarlyStopping:
         self.early_stop = False
 
     def __call__(self, train_loss, validation_loss):
+        """
+        Compares the difference between the train and validation loss and updates the counter and early_stop flag accordingly.
+        """
         if (validation_loss - train_loss) > self.min_delta:
             self.counter += 1
             if self.counter >= self.tolerance:
@@ -46,7 +59,7 @@ class Abstract_Lstm:
         training_loader,
         validation_loader,
     ):
-        early_stopping = EarlyStopping(tolerance=5, min_delta=0)
+        early_stopping = EarlyStopping(tolerance=5, min_delta=0.5)
         model = LSTMModel.LSTMModel(
             max_weeks=self.max_weeks,
             max_trans=self.max_trans,
@@ -109,9 +122,9 @@ class Abstract_Lstm:
         with torch.no_grad():
             self.best_model.eval()
             y_pred_dist = self.best_model(batch)
-            _, y_pred_tags = torch.max(y_pred_dist, dim=2)
-            y_pred = y_pred_tags.unsqueeze(-1)
-        return np.array(y_pred)
+            categorical = torch.distributions.Categorical(probs=y_pred_dist)
+            sample = categorical.sample().unsqueeze(-1)
+        return np.array(sample.float())
 
     def reset_cell_states(self, x):
         self.best_model.reset_hidden_state(x=x)
@@ -152,6 +165,13 @@ class Abstract_Lstm:
             checkpoint = torch.load(self.path)
             model_pred.load_state_dict(checkpoint["model_state_dict"])
             self.best_model = copy.deepcopy(model_pred)
+        else:
+            print("No model to load.")
+
+    def visualize_network(self, batch):
+        if self.path is not None:
+            y = self.best_model(batch)
+            return make_dot(y.mean(), params=dict(self.best_model.named_parameters()))
         else:
             print("No model to load.")
 
