@@ -1,10 +1,10 @@
 import pandas as pd
-import numpy as np
 import datetime
 import random
 from tqdm.auto import tqdm
 import torch
 from torch.utils.data import TensorDataset, DataLoader
+import tensorflow as tf
 
 
 class Preprocessing:
@@ -32,6 +32,7 @@ class Preprocessing:
         self.no_valid_samples = 0
         self.max_trans_cust = []
         self.calibration = []
+        self.seq_len = 0
 
     def date_range(self, start, end):
         """
@@ -69,13 +70,14 @@ class Preprocessing:
         if needed_columns.issubset(set(self.df.columns)):
             print("TRUE")
         else:
-            raise KeyError
+            raise KeyError("Wrong pandas schema")
 
     def split_trainingsdata(self, samples, targets):
         """
         split trainingsdata in trainigs and validatations data
         """
         VALIDATION_SPLIT = 0.1
+        self.seq_len = samples[0].shape[0]
         validation_size = round(len(samples) * VALIDATION_SPLIT)
         valid_samples, valid_targets = (
             samples[-validation_size:],
@@ -112,6 +114,36 @@ class Preprocessing:
             valid_df, batch_size=self.batch_train_size, shuffle=True
         )
         return train_dataloader, valid_dataloader
+
+    def decode_sample(self, sample, target):
+        # expand dims is important to add a dimension for the batches
+        return (
+            {
+                "week": tf.cast(tf.expand_dims(sample[:, 0], axis=-1), "int32"),
+                "transaction": tf.cast(tf.expand_dims(sample[:, 1], axis=-1), "int32"),
+            },
+            tf.cast(tf.expand_dims(target, axis=-1), "int32"),
+        )
+
+    def transform_to_tf_datasets(
+        self, train_samples, valid_samples, train_targets, valid_targets
+    ):
+
+        train_dataset = (
+            tf.data.Dataset.from_tensor_slices((train_samples, train_targets))
+            .map(self.decode_sample)
+            .batch(self.batch_train_size)
+            .repeat()
+        )
+
+        valid_dataset = (
+            tf.data.Dataset.from_tensor_slices((valid_samples, valid_targets))
+            .map(self.decode_sample)
+            .batch(self.no_valid_samples)
+            .repeat()
+        )
+
+        return train_dataset, valid_dataset
 
     def create_customer_dataframe(self):
         trans = 0
@@ -176,9 +208,10 @@ class Preprocessing:
             self.holdout.append(hold)
         return samples, targets
 
-    def run(self):
+    def run(self, dl_framwork: str):
         self.check_dataframe()
         self.create_calender()
+        self.create_holdout_calender()
         samples, targets = self.create_customer_dataframe()
         (
             train_samples,
@@ -186,11 +219,21 @@ class Preprocessing:
             valid_samples,
             valid_targets,
         ) = self.split_trainingsdata(samples=samples, targets=targets)
-        train_dataloader, valid_dataloader = self.transform_to_dataloaders(
-            train_samples=train_samples,
-            train_targets=train_targets,
-            valid_samples=valid_samples,
-            valid_targets=valid_targets,
-        )
-        self.create_holdout_calender()
-        return train_dataloader, valid_dataloader
+        if dl_framwork == "pytorch":
+            train_dataloader, valid_dataloader = self.transform_to_dataloaders(
+                train_samples=train_samples,
+                train_targets=train_targets,
+                valid_samples=valid_samples,
+                valid_targets=valid_targets,
+            )
+            return train_dataloader, valid_dataloader
+        elif dl_framwork == "tensorflow":
+            train_dataset, valid_dataset = self.transform_to_tf_datasets(
+                train_samples=train_samples,
+                valid_samples=valid_samples,
+                train_targets=train_targets,
+                valid_targets=valid_targets,
+            )
+            return train_dataset, valid_dataset
+        else:
+            "Please choose between 'tensorflow' or 'pytorch'."
