@@ -36,6 +36,7 @@ class LSTMModel(nn.Module):
         self.output_layer = nn.Linear(
             in_features=self.hidden_size, out_features=max_trans
         )
+        self.softmax_layer = nn.Softmax(dim=2)
 
     def reset_hidden_state(self, x):
         self.hidden = (
@@ -46,6 +47,7 @@ class LSTMModel(nn.Module):
     def forward(self, x):
         if not self.stateful:
             self.reset_hidden_state(x)
+            print(self.hidden)
         embedded_results = []
         x1 = torch.LongTensor(x[:, :, 0].unsqueeze(-1))
         x2 = torch.LongTensor(x[:, :, 1].unsqueeze(-1))
@@ -55,6 +57,8 @@ class LSTMModel(nn.Module):
             embedded_results[i] = embedded_results[i].squeeze(2)
         stacked_tensors = torch.cat(embedded_results, 2)
         lstm_output, self.hidden = self.lstm(stacked_tensors, self.hidden)
-        return self.output_layer(
-            lstm_output
-        )  # Pytroch Lossfunction Cross Entropy has Softmax as Activation included -> no need to declare here
+        output = self.output_layer(lstm_output)
+        if not self.stateful:
+            return output  # Pytroch Lossfunction Cross Entropy has Softmax as Activation included -> no need to declare here
+        else:
+            return self.softmax_layer(output)
