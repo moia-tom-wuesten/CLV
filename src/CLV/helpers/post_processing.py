@@ -18,6 +18,7 @@ class Postprocessing:
         batch_size_pred: int,
         training_end: datetime.datetime.date,
         holdout_start: datetime.datetime.date,
+        name: str,
     ):
         super(Postprocessing, self).__init__()
         self.df = df
@@ -30,6 +31,7 @@ class Postprocessing:
         self.training_end = training_end
         self.holdout_start = holdout_start
         self.aggregate_prediction = pd.DataFrame({})
+        self.name = name
 
     # before we can start forecasting, we feed in the entire previous history
     # for each individual, to build up the cell-state memory which represents
@@ -75,7 +77,7 @@ class Postprocessing:
             seed = np.concatenate((seed, padding), axis=0)
         return seed, no_batches, no_samples
 
-    def execute_prediction(self, seed: torch, no_batches: int):
+    def execute_prediction(self, seed: torch, no_batches: int, dl_framework: str):
         # simulate several independent scenarios
         # we take the mean to remove sampling noise
         # most improvement with 20-30 independent simulations
@@ -99,36 +101,47 @@ class Postprocessing:
                 batch_start = j * self.batch_size_pred
                 batch_end = (j + 1) * self.batch_size_pred
                 # batch is a dictionary which links model inputs with lists of sample features
-                # batch = {}
-                # batch['week'] = seed[batch_start:batch_end, :, 0:1]
-                # batch['transaction'] = seed[batch_start:batch_end, :, 1:2]
-                batch = torch.tensor(seed[batch_start:batch_end, :, :]).long()
-                # pass the batch through the prediction model: here we discard the output
-                # since we're not interested in in-sample prediction (maybe you are?), we
-                # just need to build up that internal cell-state memory
-                self.model.reset_cell_states(x=batch)
-                prediction = self.model.predict(batch=batch)
-                # prediction = model3.predict(batch)
-                # we do however take the very last element of each predicted sequence:
-                # as this is the first forecasted value
+                if dl_framework == "tensorflow":
+                    self.model.reset_states()
+                    batch = {}
+                    batch["week"] = seed[batch_start:batch_end, :, 0:1]
+                    batch["transaction"] = seed[batch_start:batch_end, :, 1:2]
+                    prediction = self.model.predict(
+                        batch,
+                        batch_size=self.batch_size_pred,
+                    )
+                elif dl_framework == "pytorch":
+                    self.model.reset_cell_states(x=batch)
+                    batch = torch.tensor(seed[batch_start:batch_end, :, :]).long()
+                    prediction = self.model.predict(batch=batch)
+                else:
+                    raise KeyError("Please choose between 'tensorflow' or 'pytorch'.")
                 pred.append(prediction[:, :, :])
                 # now lets forecast all the future steps autoregressively
                 for i in range(holdout_length - 1):
+                    batch_tf = []
                     for calendar_feature in ["week"]:
                         feature = np.repeat(
                             self.holdout_calender.iloc[i][calendar_feature],
                             self.batch_size_pred,
                         )
-                        feature = feature[:, np.newaxis, np.newaxis]
-
-                    # print(pred[-1].shape)
-                    batch = torch.cat(
-                        (torch.tensor(feature), torch.tensor(pred[-1][:, -1:, :])),
-                        dim=2,
-                    )
-                    # print(pred[-1][:, -1:, :])
-                    # break
-                    prediction = self.model.predict(batch)
+                        batch_tf.append(feature[:, np.newaxis, np.newaxis])
+                        feature_torch = feature[:, np.newaxis, np.newaxis]
+                    if dl_framework == "pytorch":
+                        batch = torch.cat(
+                            (
+                                torch.tensor(feature_torch),
+                                torch.tensor(pred[-1][:, -1:, :]),
+                            ),
+                            dim=2,
+                        ).long()
+                        prediction = self.model.predict(batch)
+                    elif dl_framework == "tensorflow":
+                        batch_tf.append(pred[-1][:, -1:, :])
+                        prediction = self.model.predict(
+                            batch_tf,
+                            batch_size=self.batch_size_pred,
+                        )
                     pred.append(prediction[:, :, :])
                 batches_predicted.append(pred)
 
@@ -184,89 +197,111 @@ class Postprocessing:
         )
         return aggregate_counts
 
-    def show_predictions(self, type: str):
+    def show_predictions(self, type: str, dl_framework: str):
         # plot calibration and holdout with prediction
-        in_sample = self.aggregate_prediction[: -self.holdout[0].shape[0]]
-        aggregate_counts = self.actual_aggregate_data()
-        out_of_sample = self.aggregate_prediction[-self.holdout[0].shape[0] :]
+        self.in_sample = self.aggregate_prediction[: -self.holdout[0].shape[0]]
+        self.aggregate_counts = self.actual_aggregate_data()
+        self.out_of_sample = self.aggregate_prediction[-self.holdout[0].shape[0] :]
         if type == "full":
             plt.figure(figsize=(18, 5))
             plt.plot(
-                aggregate_counts.index,
-                aggregate_counts["customer_id"],
+                self.aggregate_counts.index,
+                self.aggregate_counts["customer_id"],
                 color="black",
                 label="actual",
             )
             plt.plot(
-                in_sample["index"],
-                in_sample["transactions"],
+                self.in_sample["index"],
+                self.in_sample["transactions"],
                 color="Red",
                 lw=0.5,
                 label="in-sample fit",
             )
             plt.plot(
-                out_of_sample["index"],
-                out_of_sample["transactions"],
+                self.out_of_sample["index"],
+                self.out_of_sample["transactions"],
                 color="magenta",
                 label="Base LSTM",
             )
             plt.axvline(
-                len(aggregate_counts[aggregate_counts.date <= self.training_end]),
+                len(
+                    self.aggregate_counts[
+                        self.aggregate_counts.date <= self.training_end
+                    ]
+                )
+                - 1,
                 linestyle=":",
             )
-            plt.title("Weekly Aggregate Transactions - Actuals and Predicted")
+            plt.title(
+                f"Weekly Aggregate {self.name} Transactions - Actuals and Predicted"
+            )
             plt.legend()
-            plt.savefig("plots_valendin/actuals_prediction.png", dpi=600)
+            plt.savefig(
+                f"plots_{dl_framework}/{self.name}_full_prediction.png", dpi=600
+            )
             plt.show()
-        elif type == "in_sample":
+        elif type == "self.in_sample":
             plt.figure(figsize=(18, 5))
             plt.plot(
-                aggregate_counts.index,
-                aggregate_counts["customer_id"],
-                color="black",
-                label="actual",
-            )
-            plt.plot(
-                in_sample["index"],
-                in_sample["transactions"],
-                color="Red",
-                lw=0.5,
-                label="in-sample fit",
-            )
-            plt.title("Weekly Aggregate Transactions - Actuals and Predicted")
-            plt.legend()
-            plt.savefig("plots_valendin/actuals_prediction.png", dpi=600)
-            plt.show()
-        elif type == "out_of_sample":
-
-            plt.figure(figsize=(18, 5))
-            plt.plot(
-                aggregate_counts[aggregate_counts.date >= self.holdout_start].index,
-                aggregate_counts[aggregate_counts.date >= self.holdout_start][
+                self.aggregate_counts[
+                    self.aggregate_counts.date <= self.holdout_start
+                ].index,
+                self.aggregate_counts[self.aggregate_counts.date <= self.holdout_start][
                     "customer_id"
                 ],
                 color="black",
                 label="actual",
             )
             plt.plot(
-                out_of_sample["index"],
-                out_of_sample["transactions"],
+                self.in_sample["index"],
+                self.in_sample["transactions"],
+                color="Red",
+                lw=0.5,
+                label="in-sample fit",
+            )
+            plt.title(f"Weekly Aggregate {self.name}  Transactions - Insample Detail")
+            plt.legend()
+            plt.savefig(
+                f"plots_{dl_framework}/{self.name}_insample_prediction.png", dpi=600
+            )
+            plt.show()
+        elif type == "out_of_sample":
+
+            plt.figure(figsize=(18, 5))
+            plt.plot(
+                self.aggregate_counts[
+                    self.aggregate_counts.date >= self.holdout_start
+                ].index,
+                self.aggregate_counts[self.aggregate_counts.date >= self.holdout_start][
+                    "customer_id"
+                ],
+                color="black",
+                label="actual",
+            )
+            plt.plot(
+                self.out_of_sample["index"],
+                self.out_of_sample["transactions"],
                 color="magenta",
                 label="LSTM prediction",
             )
-            plt.title("Weekly Aggregate Retail Bank Transactions - Holdout Detail")
+            plt.title(f"Weekly Aggregate {self.name} Transactions - Holdout Detail")
+            plt.savefig(
+                f"plots_{dl_framework}/{self.name}_outsample_prediction.png", dpi=600
+            )
             plt.legend()
             plt.show()
         else:
             print("No valid type.")
 
-    def run(self):
+    def run(self, dl_framework):
         (
             calibration_sequence,
             no_batches,
             no_samples,
         ) = self.create_calibration_sequence()
-        predictions = self.execute_prediction(calibration_sequence, no_batches)
+        predictions = self.execute_prediction(
+            calibration_sequence, no_batches, dl_framework
+        )
 
         convertet_predictions = self.convert_predictions(predictions, no_samples)
         self.aggregate_predictions(convertet_predictions)

@@ -1,18 +1,26 @@
 
-format:
-	poetry run black --line-length=100 .
+.PHONY: lint
+lint: lint-black lint-flake8
 
-format-check:
-	poetry run flake8 --config=.flake8
+.PHONY: lint-black
+lint-black:
+	poetry run black --check src tests
 
-lint: format format-check
+.PHONY: lint-flake8
+lint-flake8:
+	poetry run flake8 --config=.flake8 src tests
+
+.PHONY: fmt
+fmt:
+	poetry run black src tests
 
 install:
 	poetry install
 
 test:
-	poetry run coverage run --source=voice-assistant-restapi -m pytest -v -p no:warnings
-	poetry run coverage report -m --skip-covered
-
-docker:
-	docker build --tag=voice-assistant-restapi --memory=2g .
+	poetry run pytest \
+		-vv \
+		--cov=src/CLV \
+		--cov-report=html \
+		--junitxml=test-results/junit.xml \
+		tests
