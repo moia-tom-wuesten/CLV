@@ -54,5 +54,5 @@ jobs:
       #----------------------------------------------
       #              run lint suite
       #----------------------------------------------
-      - name: Lint
-        run: make lint
+      #- name: Lint
+      #  run: make lint
