@@ -1,0 +1,12 @@
+{
+    "model": {
+        "name": "bank",
+        "Attributes": {
+            "max_weeks": 52,
+            "max_trans": 12,
+            "Hyperparameter": {
+                "learning_rate": 0.01
+            }
+        }
+    }
+}

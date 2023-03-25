@@ -47,7 +47,6 @@ class LSTMModel(nn.Module):
     def forward(self, x):
         if not self.stateful:
             self.reset_hidden_state(x)
-            print(self.hidden)
         embedded_results = []
         x1 = torch.LongTensor(x[:, :, 0].unsqueeze(-1))
         x2 = torch.LongTensor(x[:, :, 1].unsqueeze(-1))

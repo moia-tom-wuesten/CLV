@@ -3,9 +3,12 @@ import numpy as np
 import copy
 import matplotlib.pyplot as plt
 from datetime import datetime
-import src.CLV.pytorch_model.base_model as LSTMModel
+
+# import src.CLV.pytorch_model.base_model as LSTMModel
+import pytorch_model.base_model as LSTMModel
 import importlib
 from torchviz import make_dot
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
 
 importlib.reload(LSTMModel)
 
@@ -69,10 +72,12 @@ class Abstract_Lstm:
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         loss_function = torch.nn.CrossEntropyLoss()
         best_val_loss = float("inf")
+        best_mape_val = float("inf")
         self.best_model_dict = model.state_dict()
         best_epoch = 0
         self.train_hist = np.zeros(num_epochs)
         self.val_hist = np.zeros(num_epochs)
+        softmax_layer = torch.nn.Softmax(dim=2)
         model.train()
         for epoch in range(num_epochs):
             if not epoch == 0:
@@ -82,7 +87,6 @@ class Abstract_Lstm:
                     break
             for i, data in enumerate(training_loader):
                 inputs, labels = data
-                model.reset_hidden_state(x=inputs)
 
                 trainY_pred = model(inputs)  # predict train with the current model
 
@@ -103,10 +107,23 @@ class Abstract_Lstm:
                     self.val_loss = loss_function(
                         valY_pred.permute(0, 2, 1), vlabels.squeeze()
                     )
-            if self.val_loss < best_val_loss:
-                best_val_loss = self.val_loss
-                self.best_model_dict = model.state_dict()
-                best_epoch = epoch
+                categorical = torch.distributions.Categorical(
+                    probs=softmax_layer(valY_pred)
+                )
+                sample = categorical.sample().unsqueeze(-1)
+                y_pred_val = np.array(sample.float())
+                self.mape_val = mean_absolute_percentage_error(
+                    np.array(vlabels.squeeze()), y_pred_val.squeeze()
+                )
+                # if self.val_loss < best_val_loss:
+                #     best_val_loss = self.val_loss
+                #     self.best_model_dict = model.state_dict()
+                #     best_epoch = epoch
+                if self.mape_val < best_mape_val:
+                    best_mape_val = self.mape_val
+                    self.best_model_dict = model.state_dict()
+                    print(best_mape_val)
+                    best_epoch = epoch
             self.val_hist[epoch] = self.val_loss.item()
             if epoch % 1000 == 999:
                 print(
@@ -114,7 +131,7 @@ class Abstract_Lstm:
                     % (epoch, self.train_loss.item(), self.val_loss.item())
                 )
 
-        print("Best Epoch: %d, loss: %1.5f" % (best_epoch, best_val_loss.item()))
+        print("Best Epoch: %d, mape: %1.5f" % (best_epoch, best_mape_val))
         self.save_model(self.best_model_dict)
         self.load_best_model()
 
@@ -125,6 +142,11 @@ class Abstract_Lstm:
             categorical = torch.distributions.Categorical(probs=y_pred_dist)
             sample = categorical.sample().unsqueeze(-1)
         return np.array(sample.float())
+
+    def get_mean_absolute_percentage_error(self, y_pred):
+        y_pred = np.array(self.out_of_sample["transactions"])
+        y = np.array(self.aggregate_counts["customer_id"][-self.holdout[0].shape[0] :])
+        return mean_absolute_percentage_error(y, y_pred)
 
     def reset_cell_states(self, x):
         self.best_model.reset_hidden_state(x=x)
