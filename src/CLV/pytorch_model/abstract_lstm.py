@@ -3,13 +3,26 @@ import numpy as np
 import copy
 import matplotlib.pyplot as plt
 from datetime import datetime
+
+# import src.CLV.pytorch_model.base_model as LSTMModel
 import pytorch_model.base_model as LSTMModel
 import importlib
+from torchviz import make_dot
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
 
 importlib.reload(LSTMModel)
 
 
 class EarlyStopping:
+    """
+    The EarlyStopping class provides a method to stop training early if there is no significant improvement in the validation loss.
+    Attributes:
+    tolerance (int): Number of consecutive epochs with no improvement to wait before stopping.
+    min_delta (int): Minimum change in the monitored quantity to qualify as an improvement.
+    counter (int): Number of consecutive epochs with no improvement.
+    early_stop (bool): Flag indicating whether early stopping is triggered.
+    """
+
     def __init__(self, tolerance=5, min_delta=0):
 
         self.tolerance = tolerance
@@ -18,6 +31,9 @@ class EarlyStopping:
         self.early_stop = False
 
     def __call__(self, train_loss, validation_loss):
+        """
+        Compares the difference between the train and validation loss and updates the counter and early_stop flag accordingly.
+        """
         if (validation_loss - train_loss) > self.min_delta:
             self.counter += 1
             if self.counter >= self.tolerance:
@@ -46,7 +62,7 @@ class Abstract_Lstm:
         training_loader,
         validation_loader,
     ):
-        early_stopping = EarlyStopping(tolerance=5, min_delta=0)
+        early_stopping = EarlyStopping(tolerance=5, min_delta=0.5)
         model = LSTMModel.LSTMModel(
             max_weeks=self.max_weeks,
             max_trans=self.max_trans,
@@ -56,10 +72,12 @@ class Abstract_Lstm:
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         loss_function = torch.nn.CrossEntropyLoss()
         best_val_loss = float("inf")
+        best_mape_val = float("inf")
         self.best_model_dict = model.state_dict()
         best_epoch = 0
         self.train_hist = np.zeros(num_epochs)
         self.val_hist = np.zeros(num_epochs)
+        softmax_layer = torch.nn.Softmax(dim=2)
         model.train()
         for epoch in range(num_epochs):
             if not epoch == 0:
@@ -69,7 +87,6 @@ class Abstract_Lstm:
                     break
             for i, data in enumerate(training_loader):
                 inputs, labels = data
-                model.reset_hidden_state(x=inputs)
 
                 trainY_pred = model(inputs)  # predict train with the current model
 
@@ -90,10 +107,23 @@ class Abstract_Lstm:
                     self.val_loss = loss_function(
                         valY_pred.permute(0, 2, 1), vlabels.squeeze()
                     )
-            if self.val_loss < best_val_loss:
-                best_val_loss = self.val_loss
-                self.best_model_dict = model.state_dict()
-                best_epoch = epoch
+                categorical = torch.distributions.Categorical(
+                    probs=softmax_layer(valY_pred)
+                )
+                sample = categorical.sample().unsqueeze(-1)
+                y_pred_val = np.array(sample.float())
+                self.mape_val = mean_absolute_percentage_error(
+                    np.array(vlabels.squeeze()), y_pred_val.squeeze()
+                )
+                # if self.val_loss < best_val_loss:
+                #     best_val_loss = self.val_loss
+                #     self.best_model_dict = model.state_dict()
+                #     best_epoch = epoch
+                if self.mape_val < best_mape_val:
+                    best_mape_val = self.mape_val
+                    self.best_model_dict = model.state_dict()
+                    print(best_mape_val)
+                    best_epoch = epoch
             self.val_hist[epoch] = self.val_loss.item()
             if epoch % 1000 == 999:
                 print(
@@ -101,7 +131,7 @@ class Abstract_Lstm:
                     % (epoch, self.train_loss.item(), self.val_loss.item())
                 )
 
-        print("Best Epoch: %d, loss: %1.5f" % (best_epoch, best_val_loss.item()))
+        print("Best Epoch: %d, mape: %1.5f" % (best_epoch, best_mape_val))
         self.save_model(self.best_model_dict)
         self.load_best_model()
 
@@ -109,9 +139,14 @@ class Abstract_Lstm:
         with torch.no_grad():
             self.best_model.eval()
             y_pred_dist = self.best_model(batch)
-            _, y_pred_tags = torch.max(y_pred_dist, dim=2)
-            y_pred = y_pred_tags.unsqueeze(-1)
-        return np.array(y_pred)
+            categorical = torch.distributions.Categorical(probs=y_pred_dist)
+            sample = categorical.sample().unsqueeze(-1)
+        return np.array(sample.float())
+
+    def get_mean_absolute_percentage_error(self, y_pred):
+        y_pred = np.array(self.out_of_sample["transactions"])
+        y = np.array(self.aggregate_counts["customer_id"][-self.holdout[0].shape[0] :])
+        return mean_absolute_percentage_error(y, y_pred)
 
     def reset_cell_states(self, x):
         self.best_model.reset_hidden_state(x=x)
@@ -152,6 +187,13 @@ class Abstract_Lstm:
             checkpoint = torch.load(self.path)
             model_pred.load_state_dict(checkpoint["model_state_dict"])
             self.best_model = copy.deepcopy(model_pred)
+        else:
+            print("No model to load.")
+
+    def visualize_network(self, batch):
+        if self.path is not None:
+            y = self.best_model(batch)
+            return make_dot(y.mean(), params=dict(self.best_model.named_parameters()))
         else:
             print("No model to load.")
 
