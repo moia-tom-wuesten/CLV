@@ -3,6 +3,8 @@ from typing import Optional
 
 # %%
 import pandas as pd
+import tensorflow as tf
+
 from tensorflow.keras import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.layers import Input, Embedding, LSTM, Dense, Concatenate, Lambda
@@ -11,6 +13,7 @@ from tensorflow.keras.losses import sparse_categorical_crossentropy
 import keras.backend as K
 from keras.utils.vis_utils import plot_model
 
+print("Testing")
 
 # %%
 class TrainingModel:
@@ -25,10 +28,25 @@ class TrainingModel:
     :return: class with training model setup and fit
     """
 
-    def __init__(self, max_weeks, max_trans, seq_len, max_epoch, name):
+    def __init__(
+        self,
+        max_weeks,
+        max_trans,
+        seq_len,
+        no_valid_samples,
+        no_train_samples,
+        batch_size_train,
+        batch_size_val,
+        max_epoch,
+        name,
+    ):
         self.max_weeks = max_weeks
         self.max_trans = max_trans
         self.seq_len = seq_len
+        self.no_valid_samples = no_valid_samples
+        self.no_train_samples = no_train_samples
+        self.batch_size_train = batch_size_train
+        self.batch_size_val = batch_size_val
         self.max_epoch = max_epoch
         self.name = name
 
@@ -142,10 +160,6 @@ class TrainingModel:
         self,
         train_dataset,
         valid_dataset,
-        no_train_samples,
-        no_valid_samples,
-        batch_size_train,
-        batch_size_val,
     ):
 
         """
@@ -167,9 +181,7 @@ class TrainingModel:
             loss=sparse_categorical_crossentropy, optimizer=optimizer
         )
         self.model_date_time = pd.to_datetime("today").strftime("%Y-%m-%d-%H-%M")
-        self.model_weights_filename = (
-            f"tensorflow_model/weights/{self.name}_{self.model_date_time}_weights.hdf5"
-        )
+        self.model_weights_filename = f"{self.name}_{self.model_date_time}_weights.hdf5"
 
         callbacks = [
             # monitor the validation loss and stop training after
@@ -205,6 +217,6 @@ class TrainingModel:
             shuffle=True,
             callbacks=callbacks,
             validation_data=valid_dataset,
-            validation_steps=no_valid_samples // batch_size_val,
-            steps_per_epoch=no_train_samples // batch_size_train,
+            validation_steps=self.no_valid_samples // self.batch_size_val,
+            steps_per_epoch=self.no_train_samples // self.batch_size_train,
         )

@@ -1,6 +1,7 @@
 # %%
 import tensorflow as tf
 import os.path
+
 import tensorflow_probability as tfp
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Input, LSTM, Lambda
