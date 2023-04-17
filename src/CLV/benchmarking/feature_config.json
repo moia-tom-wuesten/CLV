@@ -2,7 +2,8 @@
     "bank": {
         "features": {
             "weeks": 52,
-            "trans": 12
+            "trans": 12,
+            "seq_len": 155
         },
         "dates": {
             "training_start": "1993-01-01",
@@ -14,7 +15,8 @@
     "moia": {
         "features": {
             "weeks": 52,
-            "trans": 8
+            "trans": 8,
+            "seq_len": 36
         },
         "dates": {
             "training_start": "2021-06-10",
@@ -26,7 +28,8 @@
     "cdnow": {
         "features": {
             "weeks": 52,
-            "trans": 25
+            "trans": 25,
+            "seq_len": 37
         },
         "dates": {
             "training_start": "1997-01-01",
@@ -38,7 +41,8 @@
     "grocery": {
         "features": {
             "weeks": 52,
-            "trans": 5
+            "trans": 5,
+            "seq_len": 56
         },
         "dates": {
             "training_start": "2006-01-01",
@@ -50,7 +54,8 @@
     "retail": {
         "features": {
             "weeks": 52,
-            "trans": 725
+            "trans": 725,
+            "seq_len": 51
         },
         "dates": {
             "training_start": "2009-12-02",

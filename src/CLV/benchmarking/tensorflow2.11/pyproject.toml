@@ -7,11 +7,11 @@ authors = ["Tom Wüsten"]
 [tool.poetry.dependencies]
 python = ">=3.8, <3.11"
 numpy = "^1.24.2"
-tensorflow = "^2.10.0"
 pandas = "^1.5.3"
 torch = "1.12"
 tqdm = "^4.64.1"
 psutil = "^5.9.4"
+pyreadr = "^0.4.7"
 
 
 [tool.poetry.dev-dependencies]

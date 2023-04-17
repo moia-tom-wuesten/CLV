@@ -9,6 +9,7 @@ import json
 from typing import Optional, Tuple
 import pandas as pd
 from datetime import datetime
+import torch
 
 
 from train_pytorch_model import (
@@ -18,6 +19,8 @@ from train_pytorch_model import (
     get_pytorch_version,
     inference,
 )
+
+# from tf_utils import create_tf_dataloader, load_tf_model, train_tf, inference
 
 
 def single_test(
@@ -49,9 +52,10 @@ def single_test(
     holdout_end = data[dataset_name]["dates"]["holdout_end"]
     print("in single step")
     if framework == "tf2":
-        from tf_utils import create_tf_dataloader, load_tf_model, train_tf
+        print("in TF")
 
         # from tf_torch_models.tf_2x_model import TensorFlow2Model
+
         train_dataloader, valid_dataloader, prep = create_tf_dataloader(
             dataset_name=dataset_name,
             training_start=training_start,
@@ -60,15 +64,19 @@ def single_test(
             holdout_end=holdout_end,
             batch_train_size=batch_size,
         )
-        model = load_tf_model(prep=prep)
-        model.graph()
+        model = load_tf_model(
+            prep=prep,
+            dataset_name=dataset_name,
+            train_dataloader=train_dataloader,
+            valid_dataloader=valid_dataloader,
+        )
         input_shape = (128, 155, 2)
         # odel_object = TensorFlow2Model(random_seed, steps_number, gpu_number)
     elif framework == "pytorch1":
         # Disable UserWarning in PyTorch 1.9.0.
         print("Load model from PyTorch 1.9.0")
         warnings.filterwarnings("ignore", category=UserWarning)
-        model = load_pytorch_model(dataset_name=dataset_name)
+        model = load_pytorch_model(dataset_name=dataset_name, device=device)
         train_dataloader, valid_dataloader = get_dataloaders_bank(
             dataset_name=dataset_name, batch_size=batch_size, num_workers=0
         )
@@ -76,7 +84,16 @@ def single_test(
         input_shape = (feature.shape[0], feature.shape[1], feature.shape[2])
         # model_object = PyTorchModel(random_seed, steps_number, gpu_number)
     elif framework == "pytorch2":
+        model = load_pytorch_model(dataset_name=dataset_name, device=device)
+        model = model.to(device)
+        train_dataloader, valid_dataloader = get_dataloaders_bank(
+            dataset_name=dataset_name, batch_size=batch_size, num_workers=0
+        )
+        feature, target = next(iter(train_dataloader))
+        input_shape = (feature.shape[0], feature.shape[1], feature.shape[2])
+    elif framework == "pytorch2_compiled":
         model = load_pytorch_model(dataset_name=dataset_name)
+        model = torch.compile(model)
         train_dataloader, valid_dataloader = get_dataloaders_bank(
             dataset_name=dataset_name, batch_size=batch_size, num_workers=0
         )
@@ -91,36 +108,47 @@ def single_test(
 
     if mode == "train":
         if framework == "tf2":
-            res_time, memory = train_tf(
+            mean_time, min_time, std_time, memory = train_tf(
                 model,
                 training_dataloader=train_dataloader,
                 validation_dataloader=valid_dataloader,
             )
         elif framework == "pytorch1":
             print("train model pytorch1")
-            res_time, memory = train(
-                model, 10, train_dataloader, valid_dataloader, device
+            mean_time, min_time, std_time, memory = train(
+                model, 10, train_dataloader, valid_dataloader, device, "mean"
             )
 
         elif framework == "pytorch2":
+            mean_time, min_time, std_time, memory = train(
+                model, 10, train_dataloader, valid_dataloader, device, "mean"
+            )
+        elif framework == "pytorch2_compiled":
             res_time, memory = train(
-                model, 10, train_dataloader, valid_dataloader, device
+                model, 1, train_dataloader, valid_dataloader, device
             )
     elif mode == "inference_gpu" or mode == "inference_cpu":
         if framework == "tf2":
-            res_time, memory = train_tf(
+
+            inference(
                 model,
-                training_dataloader=train_dataloader,
-                validation_dataloader=valid_dataloader,
+                test_dataloader=valid_dataloader,
+                batch_size=batch_size,
+                dataset_name=dataset_name,
+                prep=prep,
             )
         elif framework == "pytorch1":
-            res_time, memory = inference(
-                batch_size=batch_size, dataset_name=dataset_name
+            mean_time, min_time, std_time, memory = inference(
+                dataset_name=dataset_name,
+                test_dataloader=valid_dataloader,
+                device=device,
             )
 
         elif framework == "pytorch2":
-            res_time, memory = inference(
-                batch_size=batch_size, dataset_name=dataset_name
+            mean_time, min_time, std_time, memory = inference(
+                dataset_name=dataset_name,
+                test_dataloader=valid_dataloader,
+                device=device,
             )
     else:
         raise ValueError(
@@ -134,7 +162,9 @@ def single_test(
         batch_size,
         mode,
         device,
-        res_time,
+        mean_time,
+        min_time,
+        std_time,
         memory,
         dataset_name,
         exc_info,
@@ -155,7 +185,9 @@ def update_file(
     batch_size: int,
     mode: str,
     device: str,
-    time: str,
+    mean_time: str,
+    min_time: str,
+    std_time: str,
     memory: str,
     dataset_name: str,
     exc_info: str = "",
@@ -185,7 +217,9 @@ def update_file(
                 "Batch size",
                 "Mode",
                 "Device",
-                "Time",
+                "Time_mean",
+                "Time_min",
+                "Time_std",
                 "Memory",
             ]
         )
@@ -198,7 +232,9 @@ def update_file(
         batch_size,
         mode,
         device,
-        time,
+        mean_time,
+        min_time,
+        std_time,
         memory,
     ]
     df.loc[len(df)] = update_list
@@ -208,16 +244,16 @@ def update_file(
     mode = mode.capitalize().replace("_", " ")
     input_shape = str(input_shape)
     batch_size = str(batch_size)
-    if time != "-":
-        time = str(round(float(time), 6))
+    # if time != "-":
+    #     time = str(round(float(time), 6))
 
-    msg = f'{mode + " "*(cell_len - len(mode))}'
-    msg += f'{input_shape + " "*(cell_len - len(input_shape))}{batch_size + " "*(cell_len - len(batch_size))}'
-    msg += (
-        f'{time + " "*(cell_len - len(time))}{memory + " "*(cell_len - len(memory))}'
-        + exc_info
-    )
-    print(msg)
+    # msg = f'{mode + " "*(cell_len - len(mode))}'
+    # msg += f'{input_shape + " "*(cell_len - len(input_shape))}{batch_size + " "*(cell_len - len(batch_size))}'
+    # msg += (
+    #     f'{time + " "*(cell_len - len(time))}{memory + " "*(cell_len - len(memory))}'
+    #     + exc_info
+    # )
+    # print(msg)
 
 
 def parse_args() -> argparse.Namespace:
@@ -252,17 +288,28 @@ if __name__ == "__main__":
     if args.framework.startswith("pytorch"):
         pytorch_version = get_pytorch_version()
         print(pytorch_version)
+        if args.device == "mps":
+            if torch.backends.mps.is_available():
+                device = torch.device("mps")
+                x = torch.ones(1, device=device)
+                print(x)
+            else:
+                print("MPS device not found.")
+        else:
+            device = args.device
         logging.basicConfig(
             filename=f"results/{args.dataset}-torch-{pytorch_version}-{datetime.now()}.log",
             level=logging.DEBUG,
             format="%(asctime)s | %(message)s",
         )
-
+    else:
+        device = args.device
+    print(device)
     single_test(
         file_path=args.file,
         framework=args.framework,
         batch_size=args.batch_size,
         mode=args.mode,
-        device=args.device,
+        device=device,
         dataset_name=args.dataset,
     )
