@@ -55,6 +55,7 @@ def single_test(
         print("in TF")
 
         # from tf_torch_models.tf_2x_model import TensorFlow2Model
+        from tf_utils import create_tf_dataloader, load_tf_model, train_tf, inference
 
         train_dataloader, valid_dataloader, prep = create_tf_dataloader(
             dataset_name=dataset_name,
