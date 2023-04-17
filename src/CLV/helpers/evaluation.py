@@ -29,7 +29,7 @@ class Evaluation:
 
     def mse_error(self, actual, predictions):
         """
-        calculate MSE (mean_absolute_error)
+        calculate MSE (mean_squared_error)
         """
         self.evaluation["MSE"] = mean_squared_error(actual, predictions)
 

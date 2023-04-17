@@ -1,9 +1,11 @@
 import pandas as pd
 import datetime
 import random
+import numpy as np
 from tqdm.auto import tqdm
 import torch
 from torch.utils.data import TensorDataset, DataLoader
+
 import tensorflow as tf
 
 
@@ -16,9 +18,11 @@ class Preprocessing:
         holdout_start: datetime.datetime.date,
         holdout_end: datetime.datetime.date,
         batch_train_size: int,
+        name: str,
     ):
         super(Preprocessing, self).__init__()
         self.df = df
+        self.name = name
         self.training_start = training_start
         self.training_end = training_end
         self.holdout_start = holdout_start
@@ -106,13 +110,44 @@ class Preprocessing:
         y_valid = torch.Tensor(valid_targets).long()
         y_valid = torch.unsqueeze(y_valid, dim=-1)
         train_df = TensorDataset(x_train, y_train)
+        torch.manual_seed(42)
+
+        # def seed_worker(worker_id):
+        #     worker_seed = torch.initial_seed() % 2**32
+        #     np.random.seed(worker_seed)
+        #     random.seed(worker_seed)
+
+        # g = torch.Generator()
+        # g.manual_seed(42)
         train_dataloader = DataLoader(
-            train_df, batch_size=self.batch_train_size, shuffle=True
+            train_df,
+            batch_size=self.batch_train_size,
+            shuffle=True,
+            drop_last=True,
+            # worker_init_fn=seed_worker,
+            num_workers=0,
+            pin_memory=True,
+            # generator=g,
         )
+
         valid_df = TensorDataset(x_valid, y_valid)
+        if not self.name == "benchmark":
+            torch.save(x_train, f"datasets/{self.name}_x_train.pt")
+            torch.save(x_valid, f"datasets/{self.name}_x_valid.pt")
+            torch.save(y_train, f"datasets/{self.name}_y_train.pt")
+            torch.save(y_valid, f"datasets/{self.name}_y_valid.pt")
         valid_dataloader = DataLoader(
-            valid_df, batch_size=self.batch_train_size, shuffle=True
+            valid_df,
+            batch_size=self.batch_train_size,
+            shuffle=True,
+            drop_last=True,
+            num_workers=0,
+            pin_memory=True,
+            # worker_init_fn=seed_worker,
+            # generator=g,
         )
+
+        print(f"Shape of x_train: {x_train.shape} Shape of x_val: {x_valid.shape}")
         return train_dataloader, valid_dataloader
 
     def decode_sample(self, sample, target):
@@ -204,7 +239,7 @@ class Preprocessing:
             targets.append(target)
             # keep holdout sequence to compare with predictions
             hold = frame[frame["date"] >= self.holdout_start]
-            hold = hold.drop(columns="date")
+            hold = hold.drop(columns=["date", "year", "week"])
             self.holdout.append(hold)
         return samples, targets
 
