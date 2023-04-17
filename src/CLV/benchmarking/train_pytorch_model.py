@@ -4,7 +4,11 @@ import psutil
 import torch
 import logging
 import time
+
+# import yappi
+import numpy as np
 from tqdm import trange
+
 
 import json
 
@@ -39,13 +43,17 @@ def get_dataloaders_bank(dataset_name: str, batch_size: int, num_workers: int):
     return train_loader, valid_loader
 
 
-def load_pytorch_model(dataset_name):
+def load_pytorch_model(dataset_name, device):
     with open("feature_config.json", "r") as f:
         data = json.load(f)
     max_weeks = data[dataset_name]["features"]["weeks"]
     max_trans = data[dataset_name]["features"]["trans"]
     model = LSTMModel(
-        max_weeks=max_weeks, max_trans=max_trans, stateful=False, hidden_size=128
+        max_weeks=max_weeks,
+        max_trans=max_trans,
+        stateful=False,
+        hidden_size=128,
+        device=device,
     )
     return model
 
@@ -60,6 +68,7 @@ def train(
     train_dataloader,
     valid_dataloader,
     device,
+    measure_time_mode,
     logging_interval=50,
     best_model_save_path=None,
     scheduler=None,
@@ -67,14 +76,15 @@ def train(
     scheduler_on="valid_acc",
 ):
     list_of_cpu_usage = list()
-    start_time = time.time()
-    logging.info(f"Start Time: {start_time:.2f}")
     minibatch_loss_list_train, minibatch_loss_list_val = [], []
     best_valid_loss, best_epoch = float("inf"), 0
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    list_of_performance_times = []
     for epoch in range(num_epochs):
 
         epoch_start_time = time.time()
+        # yappi.set_clock_type("cpu")
+        # yappi.start()
         model.train()
         for batch_idx, (features, targets) in enumerate(train_dataloader):
             features = features.to(device)
@@ -103,12 +113,11 @@ def train(
                 )
 
         model.eval()
-
-        elapsed = (time.time() - epoch_start_time) / 60
-        logging.info(f"Time / epoch without evaluation: {elapsed:.2f} min")
         for i, vdata in enumerate(valid_dataloader):
             with torch.no_grad():  # save memory during inference
                 vinputs, vlabels = vdata
+                vinputs = vinputs.to(device=device)
+                vlabels = vlabels.to(device)
                 valY_pred = model(vinputs)
                 # val_loss=loss_function(valY_pred,torch.max(vlabels, dim=0)[0])
                 val_los = torch.nn.functional.cross_entropy(
@@ -120,22 +129,14 @@ def train(
                 best_valid_loss, best_epoch = val_los, epoch + 1
                 if best_model_save_path:
                     torch.save(model.state_dict(), best_model_save_path)
-
-        elapsed = (time.time() - start_time) / 60
-
-        logging.info(f"Time elapsed: {elapsed:.2f} min")
-
-        if scheduler is not None:
-
-            if scheduler_on == "valid_acc":
-                scheduler.step(valid_acc_list[-1])
-            elif scheduler_on == "minibatch_loss":
-                scheduler.step(minibatch_loss_list_train[-1])
-            else:
-                raise ValueError("Invalid `scheduler_on` choice.")
-
-    elapsed = (time.time() - start_time) / 60
-    logging.info(f"Total Training Time: {elapsed:.2f} min")
+        # yappi.get_func_stats().print_all()
+        elapsed = time.time() - epoch_start_time
+        list_of_performance_times.append(elapsed)
+    mean_elapsed = np.mean(list_of_performance_times)
+    min_elapsed = np.min(list_of_performance_times)
+    std_elapsed = np.std(list_of_performance_times)
+    print(f"{min_elapsed=}, {mean_elapsed=}, {std_elapsed=}")
+    logging.info(f"Total Training Time: {mean_elapsed:.2f} min")
     cpu_usage = sum(list_of_cpu_usage) / len(list_of_cpu_usage)
     # test_acc = compute_accuracy(model, test_loader, device=device)
     # print(f"Test accuracy {test_acc :.2f}%")
@@ -144,13 +145,10 @@ def train(
         f"| Best Validation "
         f"(Ep. {best_epoch:03d}): {best_valid_loss :.2f}"
     )
-    elapsed = (time.time() - start_time) / 60
-    print(elapsed)
-    logging.info(f"Total Time: {elapsed:.2f} min")
-    return str(elapsed), str(cpu_usage)
+    return str(mean_elapsed), str(min_elapsed), str(std_elapsed), str(cpu_usage)
 
 
-def inference(batch_size: int, dataset_name: str):
+def inference(dataset_name: str, test_dataloader: DataLoader, device: str):
     """
     Measure inference step time and GPU memory using provided model with given parameters.
     :param model_name: one of the available architectures (see tf_torch_models.utils.AVAILABLE_MODELS).
@@ -160,25 +158,44 @@ def inference(batch_size: int, dataset_name: str):
     """
     torch.cuda.empty_cache()
 
-    x_inference = torch.load(f"saved_datasets/{dataset_name}_x_train.pt")
-
-    model = load_pytorch_model(dataset_name=dataset_name)
+    model = load_pytorch_model(dataset_name=dataset_name, device=device)
+    model = model.to(device)
     model.eval()
+    list_of_performance_times = []
+    for i, vdata in enumerate(test_dataloader):
+        with torch.no_grad():
+            vinputs, vlabels = vdata
+            vinputs = vinputs.to(device=device)
+            vlabels = vlabels.to(device)
+            for step_idx in range(10):
+                start_time = time.time()
+                valY_pred = model(vinputs)
+                finish_time = time.time()
+                list_of_performance_times.append(finish_time - start_time)
+    mean_elapsed = np.mean(list_of_performance_times)
+    min_elapsed = np.min(list_of_performance_times)
+    std_elapsed = np.std(list_of_performance_times)
+    return str(mean_elapsed), str(min_elapsed), str(std_elapsed), ""
 
-    desc_str = (
-        f'Inference: Architecture: "{torch.__version__}". Batch size: "{batch_size}".'
-    )
-    all_times = []
 
-    with torch.no_grad():
-        for step_idx in trange(10, leave=False, desc=desc_str):
-            batch_start = step_idx * batch_size
-            batch_end = (step_idx + 1) * batch_size
-            start_time = time.time()
-            batch = torch.tensor(x_inference[batch_start:batch_end, :, :]).long()
-            model(batch)
-            finish_time = time.time()
-            all_times.append(finish_time - start_time)
+if __name__ == "__main__":
+    # train_dataloader, valid_dataloader = get_dataloaders_bank("bank", 62, 0)
+    # model = load_pytorch_model("bank")
+    # compiled_model = torch.compile(model)
+    # print(compiled_model)
+    # elapsed, cpu_time = train(
+    #     model=compiled_model,
+    #     num_epochs=10,
+    #     train_dataloader=train_dataloader,
+    #     valid_dataloader=valid_dataloader,
+    #     device="cpu",
+    # )
+    get_pytorch_version()
 
-    mean_time = sum(all_times) / len(all_times)
-    return str(mean_time), ""
+    def foo(x, y):
+        a = torch.sin(x)
+        b = torch.cos(x)
+        return a + b
+
+    opt_foo1 = torch.compile(foo)
+    print(opt_foo1(torch.randn(10, 10), torch.randn(10, 10)))

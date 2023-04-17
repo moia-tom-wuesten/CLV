@@ -35,15 +35,17 @@ def build_time_plot(df: pd.DataFrame, name: str) -> None:
     for arc in dataset:
         sub_df = df.where(df.Dataset == arc).dropna()
         # tf1_data = sub_df.Time.where(sub_df.Framework == "tf1").dropna().tolist()
-        tf2_data = sub_df.Time.where(sub_df.Framework == "tf2").dropna().tolist()
-        torch_data = sub_df.Time.where(sub_df.Framework == "pytorch1").dropna().tolist()
+        # tf2_data = sub_df.Time_min.where(sub_df.Framework == "tf2").dropna().tolist()
+        torch_data = (
+            sub_df.Time_min.where(sub_df.Framework == "pytorch1").dropna().tolist()
+        )
         torch_data2 = (
-            sub_df.Time.where(sub_df.Framework == "pytorch2").dropna().tolist()
+            sub_df.Time_min.where(sub_df.Framework == "pytorch2").dropna().tolist()
         )
         print(torch_data)
         arrays = [
             # np.array(tf1_data, dtype=np.float64),
-            np.array(tf2_data, dtype=np.float64),
+            # np.array(tf2_data, dtype=np.float64),
             np.array(torch_data, dtype=np.float64),
             np.array(torch_data2, dtype=np.float64),
         ]
@@ -51,9 +53,9 @@ def build_time_plot(df: pd.DataFrame, name: str) -> None:
         plot_dict = {
             "title": arc,
             # "tf1": relative_data[:, 0],
-            "tf2": arrays[0],
-            "pytorch1": arrays[1],
-            "pytorch2": arrays[2],
+            # "tf2": arrays[0],
+            "pytorch1": arrays[0],
+            "pytorch2": arrays[1],
         }
         plots_data.append(plot_dict)
         print(plot_dict)
@@ -71,13 +73,13 @@ def build_time_plot(df: pd.DataFrame, name: str) -> None:
             marker="o",
             **plot_parameters
         )
-        l2 = plt.plot(
-            cur_range,
-            plot_dict["tf2"],
-            color="firebrick",
-            marker="^",
-            **plot_parameters
-        )
+        # l2 = plt.plot(
+        #     cur_range,
+        #     plot_dict["tf2"],
+        #     color="firebrick",
+        #     marker="^",
+        #     **plot_parameters
+        # )
         l3 = plt.plot(
             cur_range,
             plot_dict["pytorch1"],
@@ -90,12 +92,91 @@ def build_time_plot(df: pd.DataFrame, name: str) -> None:
 
         plt.title(plot_dict["title"], fontsize=14)
     fig.legend(
-        [l1, l2, l3],
+        [l1, l3],
         # labels=["TensorFlow 1.15.0", "TensorFlow 2.5.0", "PyTorch 1.9.0"],
-        labels=["PyTorch 2.0", "TensorFlow 2.11", "PyTorch 1.12.0"],
+        labels=["PyTorch 2.0" "PyTorch 1.12.0"],
         loc="center right",
     )
-    plt.ylabel("Time in (min)")
+    plt.ylabel("Time in (s)")
+    plt.xlabel("Batch size")
+
+    fig.savefig(name, format="png")
+    plt.close(fig)
+
+
+def build_std_plot(df: pd.DataFrame, name: str):
+    print(df.columns)
+    df = df.sort_values(["Batch size"])
+    plots_data = []
+    print(df.head())
+    dataset = df.Dataset.unique().tolist()
+
+    for arc in dataset:
+        sub_df = df.where(df.Dataset == arc).dropna()
+        # tf1_data = sub_df.Time.where(sub_df.Framework == "tf1").dropna().tolist()
+        # tf2_data = sub_df.Time_std.where(sub_df.Framework == "tf2").dropna().tolist()
+        torch_data = (
+            sub_df.Time_std.where(sub_df.Framework == "pytorch1").dropna().tolist()
+        )
+        torch_data2 = (
+            sub_df.Time_std.where(sub_df.Framework == "pytorch2").dropna().tolist()
+        )
+        print(torch_data)
+        arrays = [
+            # np.array(tf1_data, dtype=np.float64),
+            # np.array(tf2_data, dtype=np.float64),
+            np.array(torch_data, dtype=np.float64),
+            np.array(torch_data2, dtype=np.float64),
+        ]
+
+        plot_dict = {
+            "title": arc,
+            # "tf1": relative_data[:, 0],
+            # "tf2": arrays[0],
+            "pytorch1": arrays[0],
+            "pytorch2": arrays[1],
+        }
+        plots_data.append(plot_dict)
+        print(plot_dict)
+    l1, l2, l3 = None, None, None
+    plot_parameters = {"linewidth": 2, "markersize": 7.5}
+    fig = plt.figure(figsize=(17, 4), dpi=100)
+    for i, plot_dict in enumerate(plots_data):
+        plt.subplot(1, len(plots_data), i + 1)
+        cur_range = ["32", "64", "128"]
+
+        l1 = plt.plot(
+            cur_range,
+            plot_dict["pytorch2"],
+            color="darkorange",
+            marker="o",
+            **plot_parameters
+        )
+        # l2 = plt.plot(
+        #     cur_range,
+        #     plot_dict["tf2"],
+        #     color="firebrick",
+        #     marker="^",
+        #     **plot_parameters
+        # )
+        l3 = plt.plot(
+            cur_range,
+            plot_dict["pytorch1"],
+            color="navy",
+            marker="D",
+            **plot_parameters
+        )
+
+        plt.grid(color="lightgray", linestyle="--", linewidth=1)
+
+        plt.title(plot_dict["title"], fontsize=14)
+    fig.legend(
+        [l1, l3],
+        # labels=["TensorFlow 1.15.0", "TensorFlow 2.5.0", "PyTorch 1.9.0"],
+        labels=["PyTorch 2.0", "PyTorch 1.12.0"],
+        loc="center right",
+    )
+    plt.ylabel("Time in (s)")
     plt.xlabel("Batch size")
 
     fig.savefig(name, format="png")
@@ -258,7 +339,21 @@ def build_memory_plot(
     cv2.imwrite(name, new_img)
 
 
-if __name__ == "__main__":
-    df_1 = read_df("results.csv")
+def compare_results(df_1, df2):
+    df = df_1.merge(df2, how="left", on=["Framework", "Dataset", "Batch size"])
 
-    build_time_plot(df_1, os.path.join("5_plot_train.png"))
+    df["time_difference"] = df.apply(
+        lambda x: ((x["Time_y"] - x["Time_x"]) / x["Time_y"]) * 100, axis=1
+    )
+    df = df.rename(columns={"Time_x": "Time_GPU", "Time_y": "Time_cpu"})
+    print(df)
+    df.to_csv("comparison_gpu_cpu.csv", index=False)
+
+
+if __name__ == "__main__":
+    # df_1 = read_df("results_gpu.csv")
+    # df_2 = read_df("results2.csv")
+    # compare_results(df_1, df_2)
+    df_3 = read_df("results_inference_cpu.csv")
+    build_time_plot(df_3, os.path.join("8_plot_interference_cpu.png"))
+    # build_std_plot(df_3, os.path.join("7_plot_interference_cpu_std.png"))
