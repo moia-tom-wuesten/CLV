@@ -4,6 +4,7 @@ import datetime
 from tqdm.auto import tqdm
 import torch
 import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
 
 
 class Postprocessing:
@@ -111,8 +112,8 @@ class Postprocessing:
                         batch_size=self.batch_size_pred,
                     )
                 elif dl_framework == "pytorch":
-                    self.model.reset_cell_states(x=batch)
                     batch = torch.tensor(seed[batch_start:batch_end, :, :]).long()
+                    self.model.reset_cell_states(x=batch)
                     prediction = self.model.predict(batch=batch)
                 else:
                     raise KeyError("Please choose between 'tensorflow' or 'pytorch'.")
@@ -168,7 +169,7 @@ class Postprocessing:
         # predictions is a multidimensional array holding all the predicted values
         predictions = np.asarray(z)
         # the shape of the result is: (NO_SCENARIOS, no_ids, sequence_lenght, features)
-        print(predictions.shape)
+        print(f"{predictions.shape=}")
         return predictions
 
     def aggregate_predictions(self, predictions: list):
@@ -197,13 +198,38 @@ class Postprocessing:
         )
         return aggregate_counts
 
+    def get_prediction_bias(self):
+        actual_holdout = sum(
+            self.aggregate_counts["customer_id"][-len(self.out_of_sample["index"]) :]
+        )
+        bias = (
+            100
+            * (self.out_of_sample["transactions"].sum() - actual_holdout)
+            / actual_holdout
+        )
+        print(actual_holdout)
+        return bias
+
+    def get_mean_absolute_percentage_error(self):
+        y_pred = np.array(self.out_of_sample["transactions"])
+        y = np.array(self.aggregate_counts["customer_id"][-self.holdout[0].shape[0] :])
+        return mean_absolute_percentage_error(y, y_pred) * 100
+
     def show_predictions(self, type: str, dl_framework: str):
         # plot calibration and holdout with prediction
-        self.in_sample = self.aggregate_prediction[: -self.holdout[0].shape[0]]
-        self.aggregate_counts = self.actual_aggregate_data()
-        self.out_of_sample = self.aggregate_prediction[-self.holdout[0].shape[0] :]
+        if int(self.aggregate_prediction.shape[0]) / 2 < self.holdout[0].shape[0]:
+            self.in_sample = self.aggregate_prediction[: -self.holdout[0].shape[0] + 1]
+            self.aggregate_counts = self.actual_aggregate_data()
+            self.out_of_sample = self.aggregate_prediction[-self.holdout[0].shape[0] :]
+        else:
+            self.in_sample = self.aggregate_prediction[: -self.holdout[0].shape[0]]
+            self.aggregate_counts = self.actual_aggregate_data()
+            self.out_of_sample = self.aggregate_prediction[
+                -self.holdout[0].shape[0] - 1 :
+            ]
         if type == "full":
             plt.figure(figsize=(18, 5))
+            plt.xticks(self.aggregate_counts.index[::2])
             plt.plot(
                 self.aggregate_counts.index,
                 self.aggregate_counts["customer_id"],
@@ -240,7 +266,7 @@ class Postprocessing:
                 f"plots_{dl_framework}/{self.name}_full_prediction.png", dpi=600
             )
             plt.show()
-        elif type == "self.in_sample":
+        elif type == "in_sample":
             plt.figure(figsize=(18, 5))
             plt.plot(
                 self.aggregate_counts[
@@ -252,6 +278,7 @@ class Postprocessing:
                 color="black",
                 label="actual",
             )
+            plt.xticks(self.aggregate_counts.index)
             plt.plot(
                 self.in_sample["index"],
                 self.in_sample["transactions"],
@@ -278,6 +305,7 @@ class Postprocessing:
                 color="black",
                 label="actual",
             )
+            plt.xticks(self.aggregate_counts.index)
             plt.plot(
                 self.out_of_sample["index"],
                 self.out_of_sample["transactions"],
@@ -293,6 +321,30 @@ class Postprocessing:
         else:
             print("No valid type.")
 
+    def get_root_mean_squared(self):
+        """
+        Calculates the root mean squared error (RMSE) between the predicted values and the true values.
+
+        Returns:
+        -------
+        float:
+            The RMSE of the predicted values compared to the true values.
+
+        Raises:
+        ------
+        ValueError:
+            If the holdout dataset or the converted predictions are not provided.
+        """
+        y_pred = self.convertet_predictions
+        y_pred = np.squeeze(np.mean(y_pred, axis=0))
+        holdout_length = self.holdout[0].shape[0]
+        full_data = y_pred.shape[1]
+        start = full_data - holdout_length
+        y_pred = y_pred[:, start:]
+        y = np.array(self.holdout)
+        y = np.squeeze(y)
+        return np.sqrt(mean_squared_error(y, y_pred))
+
     def run(self, dl_framework):
         (
             calibration_sequence,
@@ -303,5 +355,5 @@ class Postprocessing:
             calibration_sequence, no_batches, dl_framework
         )
 
-        convertet_predictions = self.convert_predictions(predictions, no_samples)
-        self.aggregate_predictions(convertet_predictions)
+        self.convertet_predictions = self.convert_predictions(predictions, no_samples)
+        self.aggregate_predictions(self.convertet_predictions)
