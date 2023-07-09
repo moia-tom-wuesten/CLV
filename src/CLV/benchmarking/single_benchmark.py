@@ -6,10 +6,11 @@ import sys
 import warnings
 import logging
 import json
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import pandas as pd
 from datetime import datetime
 import torch
+import numpy as np
 
 
 from train_pytorch_model import (
@@ -17,7 +18,9 @@ from train_pytorch_model import (
     get_dataloaders_bank,
     train,
     get_pytorch_version,
-    inference,
+    inference_torch,
+    profile,
+    profile2,
 )
 
 # from tf_utils import create_tf_dataloader, load_tf_model, train_tf, inference
@@ -93,8 +96,8 @@ def single_test(
         feature, target = next(iter(train_dataloader))
         input_shape = (feature.shape[0], feature.shape[1], feature.shape[2])
     elif framework == "pytorch2_compiled":
-        model = load_pytorch_model(dataset_name=dataset_name)
-        model = torch.compile(model)
+        model = load_pytorch_model(dataset_name=dataset_name, device=device)
+        model = torch.compile(model, backend="aot_eager")
         train_dataloader, valid_dataloader = get_dataloaders_bank(
             dataset_name=dataset_name, batch_size=batch_size, num_workers=0
         )
@@ -105,48 +108,48 @@ def single_test(
             f'Wrong framework "{framework}". Must be "tf1", "tf2" or "pytorch".'
         )
 
-    memory, res_time, exc_info = "-", "-", ""
-
     if mode == "train":
         if framework == "tf2":
-            mean_time, min_time, std_time, memory = train_tf(
+            mean_time, min_time, std_time, memory, array_times = train_tf(
                 model,
                 training_dataloader=train_dataloader,
                 validation_dataloader=valid_dataloader,
             )
         elif framework == "pytorch1":
+            # profile(model, train_dataloader, valid_dataloader, device)
             print("train model pytorch1")
-            mean_time, min_time, std_time, memory = train(
+            mean_time, min_time, std_time, memory, array_times = train(
                 model, 10, train_dataloader, valid_dataloader, device, "mean"
             )
 
         elif framework == "pytorch2":
-            mean_time, min_time, std_time, memory = train(
+            # profile(model, train_dataloader, valid_dataloader, device)
+            mean_time, min_time, std_time, memory, array_times = train(
                 model, 10, train_dataloader, valid_dataloader, device, "mean"
             )
+            # profile2(model, 10, train_dataloader, valid_dataloader, device, "mean")
         elif framework == "pytorch2_compiled":
-            res_time, memory = train(
-                model, 1, train_dataloader, valid_dataloader, device
+            mean_time, min_time, std_time, memory = train(
+                model, 10, train_dataloader, valid_dataloader, device, "mean"
             )
     elif mode == "inference_gpu" or mode == "inference_cpu":
         if framework == "tf2":
 
-            inference(
+            mean_time, min_time, std_time, memory, array_times = inference(
                 model,
-                test_dataloader=valid_dataloader,
-                batch_size=batch_size,
-                dataset_name=dataset_name,
+                train_dataloader=train_dataloader,
+                valid_dataloader=valid_dataloader,
                 prep=prep,
             )
         elif framework == "pytorch1":
-            mean_time, min_time, std_time, memory = inference(
+            mean_time, min_time, std_time, memory, array_times = inference_torch(
                 dataset_name=dataset_name,
                 test_dataloader=valid_dataloader,
                 device=device,
             )
 
         elif framework == "pytorch2":
-            mean_time, min_time, std_time, memory = inference(
+            mean_time, min_time, std_time, memory, array_times = inference_torch(
                 dataset_name=dataset_name,
                 test_dataloader=valid_dataloader,
                 device=device,
@@ -168,7 +171,8 @@ def single_test(
         std_time,
         memory,
         dataset_name,
-        exc_info,
+        array_times,
+        "",
     )
 
 
@@ -191,6 +195,7 @@ def update_file(
     std_time: str,
     memory: str,
     dataset_name: str,
+    times: np.array,
     exc_info: str = "",
 ) -> None:
     """
@@ -222,6 +227,7 @@ def update_file(
                 "Time_min",
                 "Time_std",
                 "Memory",
+                "Times",
             ]
         )
     else:
@@ -237,6 +243,7 @@ def update_file(
         min_time,
         std_time,
         memory,
+        times,
     ]
     df.loc[len(df)] = update_list
     df.to_csv(file_path, sep=";")
