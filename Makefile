@@ -24,3 +24,6 @@ test:
 		--cov-report=html \
 		--junitxml=test-results/junit.xml \
 		tests
+
+venv:
+	bash ./switch_venc.sh switch
